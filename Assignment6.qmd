@@ -1,0 +1,263 @@
+---
+title: "Spatial Dashboard: Minnesota and Hennepin County"
+author: Courtney Broedlow"
+date: "2023-03-23"
+output: html
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(osmdata)
+library(tidyverse)
+library(ggmap)
+library(sf)
+library(ggthemes)
+library(plotly)
+library(scales)
+library(tidycensus)
+library(gt)
+library(leaflet)
+library(viridis)
+library(lubridate)
+library(flexdashboard)
+#Working directory for .RMD
+knitr::opts_knit$set(echo = TRUE,
+                     root.dir = rprojroot::find_rstudio_root_file())
+#Controlling figure output in markdown
+knitr::opts_chunk$set(
+#  fig.height =   
+  fig.width = 6,
+#  fig.asp = .5,
+  out.width = "90%",
+#  out.height = 
+ fig.align  = "center",
+  cache = FALSE,
+  eval  = TRUE,
+  echo  = FALSE,
+  warning = FALSE
+)
+#My Colours (from viridis)
+my_purple <- "#440154FF"
+my_yellow <- "#FDE725FF"
+#Set Theme for ggplot2
+theme_set(theme_bw() + theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom"))
+#Set Scientific notation output and decimal places for knitr
+options(scipen = 999)
+options(digits = 4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r}
+## Load the API key
+api_key <- Sys.getenv("MAPS_API_KEY")
+```
+
+```{r, include = FALSE}
+#Open a query (opq) within a bbox for MN
+#Get specific loctions for Emergency buildings (fire, police, and hostipals)
+#Open a query (opq) within a bbox for MN
+bb_MN <- getbb("Minnesota", featuretype = "state")
+osm_sf.df <- bb_MN %>%
+            opq(timeout=180) %>% 
+  add_osm_feature(key = "amenity", value = c("fire_station", "police", "hospital")) %>%
+             osmdata_sf()
+amenity_points.df <- osm_sf.df$osm_points %>% 
+  janitor::clean_names() %>%
+  filter(!is.na(amenity)) %>%
+  dplyr::select(osm_id, name, amenity, phone, website, geometry) %>%
+  mutate(amenity = str_to_title(amenity) %>% as_factor())
+amenity_points.df %>%
+  as_tibble() %>%
+  dplyr::select(-geometry)
+```
+
+Column
+-----------------------------------------------------------------------
+```{r, include=FALSE, echo=FALSE}
+## 1.2: Please create 1 leaflet of the entire state of MN which contains at least 3 Open Street Maps (osmdata) features of your choice.
+#Leaflet
+amenity_types <- levels(amenity_points.df$amenity)
+n_types    <- length(amenity_types)
+my_pallete <- colorFactor(viridis_pal(option = "H")(n_types), levels = amenity_types) #Colors
+# Make leaflet
+leaflet(data = amenity_points.df) %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(amenity),
+    opacity = 0.4,
+    weight  = 2, #outline strength
+    radius  = 4 #size of circle
+  ) %>%
+  addLegend(
+    title    = "Amenity Type",
+    position = "bottomright",
+    colors   = viridis_pal(option = "H")(n_types),
+    labels   = amenity_types 
+  )
+#Need html tools to get our labels to render appropriately
+library(htmltools, quietly = TRUE)
+#Adding text labels
+amenity_label <- amenity_points.df %>%
+  mutate(
+    across(
+      c(name),
+      ~ifelse(is.na(.x), "NA", .x)
+    ),
+    text_label = str_c(
+                   name,
+                   "<br/>City: "
+                 )
+  )
+```
+```{r, echo=FALSE}
+#final figure
+amenity_label %>%
+  leaflet() %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(amenity),
+    label   = ~map(text_label, HTML), #map over labels, make html
+    opacity = 0.6,
+    weight  = 3, 
+    radius  = 4 
+  ) %>%
+  addLegend(
+    title    = "Minnesota Public Service Ameneties",
+    position = "bottomright",
+    colors   = viridis_pal(option = "D")(n_types),
+    labels   = amenity_types 
+  )
+```
+
+Column {.tabset, data-width=800}
+-----------------------------------------------------------------------
+```{r, include=FALSE, echo=FALSE}
+##1.3: Create ggplotly of Hennepin County
+#Census API key
+census_api_key("9ce44fc633a9ae91c561bc9ea6a4081026323ff2")
+#Google maps API key
+register_google(key = "AIzaSyCcclxMFofIddDlNmWng7dptag7iyTkVlU")
+# Step 1. Create the base map
+#Get the bounding box and county outline
+mn.box           <- osmdata::getbb("minnesota")
+hennepin.box     <- osmdata::getbb("hennepin")
+hennepin.outline <- osmdata::getbb("hennepin", format_out = "polygon")[[1]] %>%
+  as_tibble() %>%
+  rename(longitude = V1, latitude = V2)
+#Get map from ggmap
+#Get the base map (foundation layer)
+mn_base.map <- get_map(
+                location = hennepin.box,
+                source   = "stamen",
+                maptype  = "terrain",
+                crop = TRUE
+               )
+#Create the base map
+hennepin_base.gg <- ggmap(mn_base.map) +
+  geom_polygon(data = hennepin.outline, aes(x = longitude, y = latitude), colour = "black", size = 1.6, alpha = 0.1) +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+    
+#Display base map
+#hennepin_base.gg
+#Step 2. Add the layer from the ACS data, and display using plotly 
+#Call the ACS API, returns a sf object
+median_house.df <- get_acs(
+  geography = "tract",
+  variables = "B25077_001", #Code for median house value
+  state     = "MN",
+  county    = "Hennepin",
+  year      = 2020,
+  geometry  = TRUE,
+  cb        = FALSE
+)
+#Add a text label 
+median_house_plotly.df <- median_house.df %>%
+  mutate(
+    tract      = str_split(NAME, ",") %>%
+      map_chr(1) %>%
+      str_remove("Census Tract "),
+    text_label = str_c(
+      "Tract: ",
+      tract,
+      "\nMedian House Price: ",
+      scales::dollar(estimate)
+    )
+  )
+#Generate the ggplot
+house.gg <- ggplot() + 
+  geom_sf(data = median_house_plotly.df, 
+          aes(fill = estimate, text = text_label),
+          colour = "black", size = 0.1) + 
+  labs(title = "       Hennepin County, MN 2020 ACS Median House Price") + 
+  scale_fill_viridis_c("Median House Price", labels = scales::dollar) +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+```
+```{r}
+#plot
+ggplotly(house.gg,
+         tooltip = "text",
+         height  = 600,
+         width   = 800) %>%
+  style(hoveron = "fills")
+```
+
+```{r}
+### 1.4 Spacial visualization of Hennepin County
+work_age.df <- get_acs(
+  geography = "tract",
+  variables = "B23013_001E", #Code for Median age of working
+  state     = "MN",
+  county    = "Hennepin",
+  year      = 2020,
+  geometry  = TRUE,
+  cb        = FALSE
+) 
+#Add a text label 
+work_age_plotly.df <- work_age.df %>%
+  mutate(
+    tract      = str_split(NAME, ",") %>%
+      map_chr(1) %>%
+      str_remove("Census Tract "),
+    text_label = str_c(
+      "Tract: ",
+      tract,
+      "\nMedian Age: ",
+      estimate
+      )
+  )
+#Generate the ggplot
+age.gg <- ggplot() + 
+  geom_sf(data = work_age_plotly.df, 
+          aes(fill = estimate, text = text_label),
+          colour = "black", size = 0.1) + 
+  labs(title = "Hennepin County, MN 2020 ACS Median working Age") + 
+  scale_fill_viridis_c("Median Age") +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+#Display
+ggplotly(age.gg,
+         tooltip = "text",
+         height  = 600,
+         width   = 800) %>%
+  style(hoveron = "fills")
+```
