@@ -25,6 +25,7 @@ jobs:
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
             packages:
+              any::janitor
               any::rprojroot
               any::dplyr
               any::osmdata
