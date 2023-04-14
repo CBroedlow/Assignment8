@@ -25,20 +25,21 @@ jobs:
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
             packages:
-               any::knitr
-               any::flexdashboard
-               any::sf
-               any::tidyverse
-               any::lubridate
-               any::osmdata
-               any::ggmap
-               any::ggthemes
-               any::plotly
-               any::scales
-               any::tidycensus
-               any::gt
-               any::leaflet
-               any::viridis                   
+              any::rprojroot
+              any::dplyr
+              any::osmdata
+              any::tidyverse
+              any::ggmap
+              any::sf
+              any::ggthemes
+              any::plotly
+              any::scales
+              any::tidycensus
+              any::gt
+              any::leaflet
+              any::viridis
+              any::lubridate
+              any::flexdashboard                  
       - name: Render document
         uses: quarto-dev/quarto-actions/render@v2
         env:
